@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, String, LargeBinary, DateTime, ForeignKey
 from datetime import datetime
 from typing import List
 
-engine = create_engine("postgres+psycopg2://admin:admin@postgres:5432/password_manager")
+engine = create_engine("postgresql+psycopg2://admin:admin@postgres:5433/password_manager")
 Session = scoped_session(sessionmaker(bind=engine))
 session = Session()
 
@@ -30,11 +30,13 @@ class VaultItem(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     user: Mapped["User"] = relationship(back_populates="vault_items")
     title: Mapped[str] = mapped_column(String(100))
+    url: Mapped[str] = mapped_column(String(255))
     login: Mapped[str] = mapped_column(String(120))
     password_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
     iv: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    notes: Mapped[str] = mapped_column(String(500))
 
 
 if __name__ == '__main__':

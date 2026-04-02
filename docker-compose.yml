@@ -1,0 +1,12 @@
+services:
+  db:
+    image: postgres:17.9
+    container_name: password-manager
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    env_file:
+      - ./db/.env
+
+volumes:
+  postgres-data:
