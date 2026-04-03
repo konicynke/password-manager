@@ -5,6 +5,9 @@ from sqlalchemy.exc import IntegrityError
 from zxcvbn import zxcvbn
 from os import urandom
 from hashlib import pbkdf2_hmac
+from urllib.parse import urlparse
+
+active_key = {}
 
 def hash_password(password):
     ph = PasswordHasher()
@@ -26,7 +29,7 @@ def create_new_user(data):
 
     password_strength = zxcvbn(password)
     if password_strength['score'] <= 2:
-        return {'status': 'error', 'message': f'Password is too easy, suggestions: {password_strength['feedback']['suggestions']}'}
+        return {'status': 'error', 'message': f"Password is too easy, suggestions: {password_strength['feedback']['suggestions']}"}
 
     password_hash = hash_password(password)
     kdf_salt = urandom(16)
@@ -41,7 +44,7 @@ def create_new_user(data):
         return {'status': 'error', 'message': 'error has occured'}
 
 def kdf_hash(password, kdf_salt, iterations=100000):
-    key = pbkdf2_hmac('sha256', password, kdf_salt, iterations)
+    key = pbkdf2_hmac('sha256', password.encode(), kdf_salt, iterations)
     return key
 
 def login_user(data):
@@ -58,8 +61,58 @@ def login_user(data):
     try:
         ph.verify(password_hash, password)
         session.commit()
+        session['user_id'] = user.id
+        master_key = kdf_hash(password, user.kdf_salt)
+        active_key.update({'master_key': master_key})
         return {'status': 'ok', 'message': 'Login successful'}
     except VerifyMismatchError:
         session.commit()
         return {'status': 'error', 'message': 'wrong email or password'}
 
+def encrypt_password(password, iv, master_key):
+    pass
+
+def validate_url(url):
+    parsed = urlparse(url)
+
+    if parsed.scheme not in ['http', 'https']:
+        return False, 'invalid scheme'
+
+    if not parsed.netloc:
+        return False, 'missing domain'
+
+    return True, None
+
+def add_new_vault_item(data):
+    current_user_id = session.get('user_id')
+    title = data.get('title')
+    url = data.get('url')
+    login = data.get('login')
+    password = data.get('password')
+    notes = data.get('notes')
+
+    required_fields = ['title', 'url', 'login', 'password']
+    missing_fields = [field for field in required_fields if not data.get(field)]
+    if missing_fields:
+        return {'status': 'error', 'message': f"Missing fields: {', '.join(missing_fields)}"}
+    
+    is_valid, error = validate_url(url)
+    if not is_valid:
+        return {'status': 'error', 'message': error}
+    
+    iv = urandom(16)
+
+    password_encrypted = encrypt_password(password, iv, master_key=active_key['master_key'])
+
+    new_vault_item = VaultItem(user_id = current_user_id, title = title, url = url, login = login, password_encrypted = password_encrypted, iv = iv, notes = notes)
+    try:
+        session.add(new_vault_item)
+        session.commit()
+        return {'status': 'ok', 'message': 'service has been added to vault'}
+    except IntegrityError:
+        session.rollback()
+        return {'status': 'error', 'message': 'an error has occured'}
+
+def logout_user():
+    active_key.clear()
+    pass
