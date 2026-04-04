@@ -6,6 +6,7 @@ from zxcvbn import zxcvbn
 from os import urandom
 from hashlib import pbkdf2_hmac
 from urllib.parse import urlparse
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 active_key = {}
 
@@ -69,9 +70,6 @@ def login_user(data):
         session.commit()
         return {'status': 'error', 'message': 'wrong email or password'}
 
-def encrypt_password(password, iv, master_key):
-    pass
-
 def validate_url(url):
     parsed = urlparse(url)
 
@@ -82,6 +80,19 @@ def validate_url(url):
         return False, 'missing domain'
 
     return True, None
+
+def encrypt_password(password, iv, master_key):
+    password = password.encode()
+    cipher = Cipher(algorithms.AES(master_key), modes.GCM(iv))
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(password) + encryptor.finalize()
+    return ct, encryptor.tag
+
+def decrypt_password(iv, ct, tag, master_key):
+    cipher = Cipher(algorithms.AES(master_key), modes.GCM(iv, tag))
+    decryptor = cipher.decryptor()
+    plain_text = decryptor.update(ct) + decryptor.finalize()
+    return plain_text
 
 def add_new_vault_item(data):
     current_user_id = session.get('user_id')
@@ -116,3 +127,13 @@ def add_new_vault_item(data):
 def logout_user():
     active_key.clear()
     pass
+
+if __name__ == '__main__':
+    master_key = '12345678901234567890123456789012'
+    master_key = master_key.encode()
+    iv = urandom(12)
+    password = '123456789012345'
+    ct, tag = encrypt_password(password, iv, master_key)
+    print(tag, ct)
+    plain_text = decrypt_password(iv, ct, tag, master_key)
+    print(f'\n{plain_text}')
