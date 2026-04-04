@@ -1,6 +1,6 @@
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from db.db import User, VaultItem, session
+from db.db import User, VaultItem, db_session
 from sqlalchemy.exc import IntegrityError
 from zxcvbn import zxcvbn
 from os import urandom
@@ -16,7 +16,7 @@ def hash_password(password):
     return password_hash
 
 def get_user_email(email):
-    return session.query(User).filter_by(email=email).first()
+    return db_session.query(User).filter_by(email=email).first()
 
 def create_new_user(data):
     email = data.get('email')
@@ -37,18 +37,18 @@ def create_new_user(data):
 
     new_user = User(email = email, password_hash = password_hash, kdf_salt = kdf_salt)
     try:
-        session.add(new_user)
-        session.commit()
+        db_session.add(new_user)
+        db_session.commit()
         return {'status': 'ok', 'message': 'user has been successfuly created'}
     except IntegrityError:
-        session.rollback()
+        db_session.rollback()
         return {'status': 'error', 'message': 'error has occured'}
 
 def kdf_hash(password, kdf_salt, iterations=100000):
     key = pbkdf2_hmac('sha256', password.encode(), kdf_salt, iterations)
     return key
 
-def login_user(data):
+def login_user(data, request):
     email = data.get('email')
     password = data.get('password')
     user = get_user_email(email)
@@ -60,14 +60,13 @@ def login_user(data):
     password_hash = user.password_hash
     
     try:
-        ph.verify(password_hash, password)
-        session.commit()
-        session['user_id'] = user.id
+        if ph.verify(password_hash, password):
+            request.session['user_id'] = user.id
         master_key = kdf_hash(password, user.kdf_salt)
-        active_key.update({'master_key': master_key})
+        active_key[user.id] = master_key
         return {'status': 'ok', 'message': 'Login successful'}
     except VerifyMismatchError:
-        session.commit()
+        db_session.commit()
         return {'status': 'error', 'message': 'wrong email or password'}
 
 def validate_url(url):
@@ -81,12 +80,13 @@ def validate_url(url):
 
     return True, None
 
-def encrypt_password(password, iv, master_key):
+def encrypt_password(password, master_key):
+    iv = urandom(12)
     password = password.encode()
     cipher = Cipher(algorithms.AES(master_key), modes.GCM(iv))
     encryptor = cipher.encryptor()
     ct = encryptor.update(password) + encryptor.finalize()
-    return ct, encryptor.tag
+    return ct, iv, encryptor.tag
 
 def decrypt_password(iv, ct, tag, master_key):
     cipher = Cipher(algorithms.AES(master_key), modes.GCM(iv, tag))
@@ -94,8 +94,9 @@ def decrypt_password(iv, ct, tag, master_key):
     plain_text = decryptor.update(ct) + decryptor.finalize()
     return plain_text
 
-def add_new_vault_item(data):
-    current_user_id = session.get('user_id')
+def add_new_vault_item(data, request):
+    current_user_id = request.session.get('user_id')
+    user_master_key = active_key.get(current_user_id)
     title = data.get('title')
     url = data.get('url')
     login = data.get('login')
@@ -110,30 +111,27 @@ def add_new_vault_item(data):
     is_valid, error = validate_url(url)
     if not is_valid:
         return {'status': 'error', 'message': error}
+
+    if user_master_key is None:
+        return {'status': 'error', 'message': 'session has expired. login again'}
     
-    iv = urandom(16)
+    password_encrypted, iv, tag = encrypt_password(password, master_key = user_master_key)
 
-    password_encrypted = encrypt_password(password, iv, master_key=active_key['master_key'])
-
-    new_vault_item = VaultItem(user_id = current_user_id, title = title, url = url, login = login, password_encrypted = password_encrypted, iv = iv, notes = notes)
+    new_vault_item = VaultItem(user_id = current_user_id, title = title, url = url, login = login, password_encrypted = password_encrypted, iv = iv, tag = tag, notes = notes)
     try:
-        session.add(new_vault_item)
-        session.commit()
+        db_session.add(new_vault_item)
+        db_session.commit()
         return {'status': 'ok', 'message': 'service has been added to vault'}
     except IntegrityError:
-        session.rollback()
+        db_session.rollback()
         return {'status': 'error', 'message': 'an error has occured'}
+
+def get_vault_items():
+    current_user_id = session.get('user_id')
+    vault_items = db_session.query(VaultItem).filter_by(user_id = current_user_id)
+    for vault_item in vault_items:
+        print(vault_item)
 
 def logout_user():
     active_key.clear()
     pass
-
-if __name__ == '__main__':
-    master_key = '12345678901234567890123456789012'
-    master_key = master_key.encode()
-    iv = urandom(12)
-    password = '123456789012345'
-    ct, tag = encrypt_password(password, iv, master_key)
-    print(tag, ct)
-    plain_text = decrypt_password(iv, ct, tag, master_key)
-    print(f'\n{plain_text}')
