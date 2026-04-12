@@ -1,17 +1,9 @@
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.orm import scoped_session, sessionmaker
-from sqlalchemy import create_engine, String, LargeBinary, DateTime, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import String, LargeBinary, DateTime, ForeignKey
 from datetime import datetime
 from typing import List
 
-engine = create_engine("postgresql+psycopg2://admin:admin@localhost:5433/password_manager")
-Session = scoped_session(sessionmaker(bind=engine))
-db_session = Session()
-
-
-class Base(DeclarativeBase):
-    pass
-
+from database import Base
 
 class User(Base):
     __tablename__ = "users"
@@ -21,6 +13,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     kdf_salt: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    
     vault_items: Mapped[List["VaultItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
@@ -30,16 +23,14 @@ class VaultItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     user: Mapped["User"] = relationship(back_populates="vault_items")
+    
     title: Mapped[str] = mapped_column(String(100))
     url: Mapped[str] = mapped_column(String(255))
     login: Mapped[str] = mapped_column(String(120))
     password_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
     iv: Mapped[bytes] = mapped_column(LargeBinary)
     tag: Mapped[bytes] = mapped_column(LargeBinary)
+    
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     notes: Mapped[str] = mapped_column(String(500))
-
-
-if __name__ == '__main__':
-    Base.metadata.create_all(engine)
