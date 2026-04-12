@@ -1,12 +1,13 @@
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from db.db import User, VaultItem, db_session
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from zxcvbn import zxcvbn
 from os import urandom
 from hashlib import pbkdf2_hmac
 from urllib.parse import urlparse
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.exceptions import InvalidTag
 
 active_key = {}
 
@@ -85,13 +86,13 @@ def encrypt_password(password, master_key):
     password = password.encode()
     cipher = Cipher(algorithms.AES(master_key), modes.GCM(iv))
     encryptor = cipher.encryptor()
-    ct = encryptor.update(password) + encryptor.finalize()
-    return ct, iv, encryptor.tag
+    password_encrypted = encryptor.update(password) + encryptor.finalize()
+    return password_encrypted, iv, encryptor.tag
 
-def decrypt_password(iv, ct, tag, master_key):
+def decrypt_password(iv, password_encrypted, tag, master_key):
     cipher = Cipher(algorithms.AES(master_key), modes.GCM(iv, tag))
     decryptor = cipher.decryptor()
-    plain_text = decryptor.update(ct) + decryptor.finalize()
+    plain_text = decryptor.update(password_encrypted) + decryptor.finalize()
     return plain_text
 
 def add_new_vault_item(data, request):
@@ -126,12 +127,105 @@ def add_new_vault_item(data, request):
         db_session.rollback()
         return {'status': 'error', 'message': 'an error has occured'}
 
-def get_vault_items():
-    current_user_id = session.get('user_id')
-    vault_items = db_session.query(VaultItem).filter_by(user_id = current_user_id)
-    for vault_item in vault_items:
-        print(vault_item)
+def get_vault_items(request):
+    current_user_id = request.session.get('user_id')
+    user_master_key = active_key.get(current_user_id)
+    items_list = []
+    
+    if user_master_key is None or current_user_id is None:
+        return {'status': 'error', 'message': 'session has expired. login again'}
 
-def logout_user():
-    active_key.clear()
-    pass
+    vault_items = db_session.query(VaultItem).filter_by(user_id = current_user_id)
+    
+    for vault_item in vault_items:
+        item_data = {}
+        
+        item_data['id'] = vault_item.id
+        item_data['title'] = vault_item.title
+        item_data['url'] = vault_item.url
+        item_data['login'] = vault_item.login
+
+        try:
+            plain_password = decrypt_password(vault_item.iv, vault_item.password_encrypted, vault_item.tag, user_master_key).decode('utf-8')
+        except InvalidTag:
+            plain_password = 'INTEGRITY ERROR'
+
+        item_data['password'] = plain_password
+        item_data['updated_at'] = vault_item.updated_at
+        item_data['notes'] = vault_item.notes
+        
+        items_list.append(item_data)
+
+    return items_list
+
+def delete_vault_item(item_id, request):
+    current_user_id = request.session.get('user_id')
+
+    if current_user_id is None:
+        return {'status': 'error', 'message': 'session has expired. login again'}
+
+    try:
+        deleted_count = db_session.query(VaultItem).filter_by(user_id = current_user_id, id = item_id).delete()
+        
+        if deleted_count == 0:
+            return {'status': 'error', 'message': 'no db element found'}
+
+        db_session.commit()
+
+    except SQLAlchemyError:
+        db_session.rollback()
+        return {'status': 'error', 'message': 'a db error has occured'}
+
+    return {'status': 'ok', 'message': 'item successfully deleted'}
+
+def update_vault_item(item_id, data, request):
+    current_user_id = request.session.get('user_id')
+    user_master_key = active_key.get(current_user_id)
+
+    if current_user_id is None or user_master_key is None:
+        return {'status': 'error', 'message': 'session has expired. login again'}
+    
+    vault_item = db_session.query(VaultItem).filter_by(user_id=current_user_id, id=item_id).first()
+    if not vault_item:
+        return {'status': 'error', 'message': 'item not found'}
+
+    new_encrypted_data = None
+    if data.get('password'):
+        try:
+            new_encrypted_data = encrypt_password(data.get('password'), user_master_key)
+        except Exception as e:
+            return {'status': 'error', 'message': f"encryption failed: {str(e)}"}
+
+    try:
+        if data.get('title'):
+            vault_item.title = data.get('title')
+        
+        if data.get('url'):
+            is_valid, error = validate_url(data.get('url'))
+            if not is_valid:
+                return {'status': 'error', 'message': error}    
+            vault_item.url = data.get('url')
+        
+        if data.get('login'):
+            vault_item.login = data.get('login')
+
+        if new_encrypted_data:
+            vault_item.password_encrypted, vault_item.iv, vault_item.tag = new_encrypted_data
+        
+        if data.get('notes') is not None:
+            vault_item.notes = data.get('notes')
+
+        db_session.commit()
+
+    except SQLAlchemyError:
+        db_session.rollback()
+        return {'status': 'error', 'message': 'a db error has occured'}
+
+    return {'status': 'ok', 'message': 'item successfully updated'}
+
+def logout_user(request):
+    current_user_id = request.session.get('user_id')
+    if current_user_id in active_key:
+        del active_key[current_user_id]
+    request.session.clear()
+    return {'status': 'ok', 'message': 'logged out'}
