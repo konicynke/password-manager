@@ -135,7 +135,7 @@ def get_vault_items(request):
     if user_master_key is None or current_user_id is None:
         return {'status': 'error', 'message': 'session has expired. login again'}
 
-    vault_items = db_session.query(VaultItem).filter_by(user_id = current_user_id)
+    vault_items = db_session.query(VaultItem).filter_by(user_id = current_user_id).all()
     
     for vault_item in vault_items:
         item_data = {}
@@ -222,6 +222,37 @@ def update_vault_item(item_id, data, request):
         return {'status': 'error', 'message': 'a db error has occured'}
 
     return {'status': 'ok', 'message': 'item successfully updated'}
+
+def audit_passwords(request):
+    current_user_id = request.session.get('user_id')
+    user_master_key = active_key.get(current_user_id)
+
+    if current_user_id is None or user_master_key is None:
+        return {'status': 'error', 'message': 'session has expired. login again'}
+
+    vault_items = get_vault_items(request)
+    password_usage_count = {}
+
+    for item in vault_items:
+        password = item['password']
+
+        if password not in password_usage_count:
+            password_usage_count[item['password']] = []
+
+        password_usage_count[item['password']].append(item['title'])
+
+    for item in vault_items:
+        title_list = password_usage_count[item['password']]
+        duplicates = []
+        
+        for title in title_list:
+            if title != item['title']:
+                duplicates.append(title)
+
+        item['reused_in'] = duplicates
+        item['score'] = zxcvbn(item['password'])['score']
+
+    return vault_items
 
 def logout_user(request):
     current_user_id = request.session.get('user_id')

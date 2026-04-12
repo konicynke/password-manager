@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from app.auth import create_new_user, login_user, add_new_vault_item, get_vault_items, update_vault_item, delete_vault_item, logout_user
+from app.auth import create_new_user, login_user, add_new_vault_item, get_vault_items, update_vault_item, delete_vault_item, logout_user, audit_passwords
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key='password-manager-secret-key')
@@ -67,6 +67,10 @@ async def vault_delete(item_id: int, request: Request):
 @app.patch('/vault/{item_id}')
 async def vault_patch(item_id: int, data: VaultItemUpdate, request: Request):
     return update_vault_item(item_id, data.dict(), request)
+
+@app.get('/vault/audit')
+async def vault_audit_get(request: Request):
+    return audit_passwords(request)
 
 @app.post('/logout')
 async def logout_post(request: Request):
