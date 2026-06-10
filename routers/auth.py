@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy.orm import Session
 
-from main import limiter
+from extensions import limiter
 from database import get_db
 from schemas import RegisterData, LoginData
 from services.auth_service import create_new_user, login_user, logout_user

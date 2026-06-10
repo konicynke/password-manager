@@ -1,7 +1,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker, DeclarativeBase
+import os
 
-SQLALCHEMY_DATABASE_URL = "postgresql+psycopg2://admin:admin@localhost:5433/password_manager"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://admin:admin@db:5432/password_manager")
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 
